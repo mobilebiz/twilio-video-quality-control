@@ -1,0 +1,16 @@
+{
+  "name": "twilio-video-quality-control",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "twilio-run --env",
+    "deploy": "twilio serverless:deploy --runtime=node12"
+  },
+  "devDependencies": {
+    "twilio-run": "^3.2.2"
+  },
+  "engines": {
+    "node": "12.8.0"
+  }
+}
