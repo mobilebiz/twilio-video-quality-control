@@ -6,6 +6,8 @@
   const Video = Twilio.Video; // Twilio Video JS SDK
   let videoRoom;
   const tuning = true; // チューニング（true: する、false: しない）
+  const preflight = true; // 事前環境確認（true: する、false: しない）
+  const tcpForced = true; // TURN(TCP:443)の利用を強制（true: する、false: しない）
 
   // プレビュー画面の表示
   const options = {
@@ -32,19 +34,87 @@
   const btnJoinRoom = document.getElementById("button-join");
   const btnLeaveRoom = document.getElementById("button-leave");
 
-  // 入室ボタンが押されたときの処理
-  btnJoinRoom.onclick = () => {
-    // アクセストークンを取得
-    axios
-      .get(
-        `${document.location.protocol}//${TWILIO_DOMAIN}/video-token?roomName=${ROOM_NAME}`
-      )
-      .then(async (body) => {
-        const token = body.data.token;
-        console.log(`Token got. ${token}`); // 本番環境ではコメントアウトしましょう
+  // ガイダンスの準備
+  let progress = "";
+  const guide = document.getElementById("guide");
 
-        connectRoom(token); // ルームに接続
-      });
+  // トークンの取得
+  const getToken = () => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const body = await axios.get(
+          `${document.location.protocol}//${TWILIO_DOMAIN}/video-token?roomName=${ROOM_NAME}`
+        );
+        resolve([body.data.token, body.data.iceServer]);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  };
+
+  // PreFlight API
+  if (preflight) {
+    const [publisherToken] = await getToken();
+    const [subscribeToken] = await getToken();
+    const preflightTest = Video.runPreflight(publisherToken, subscribeToken);
+
+    preflightTest.on("completed", (report) => {
+      progress += `
+        ----------------
+        Test completed in ${report.testTiming.duration} milliseconds.
+        It took ${
+          report.networkTiming.connect.duration
+        } milliseconds to connect.
+        It took ${
+          report.networkTiming.media.duration
+        }  milliseconds to receive media.
+        ICECandidatesStats list was: ${JSON.stringify(
+          report.iceCandidateStats,
+          null,
+          "\t"
+        )}
+        Selected candidates: ${JSON.stringify(
+          report.selectedIceCandidatePairStats,
+          null,
+          "\t"
+        )}
+        Your network jitter was: ${JSON.stringify(
+          report.stats.jitter,
+          null,
+          "\t"
+        )}.
+        Your network rtt was: ${JSON.stringify(report.stats.rtt, null, "\t")}.
+        Your network packetLoss was: ${JSON.stringify(
+          report.stats.packetLoss,
+          null,
+          "\t"
+        )}
+      `;
+      guide.value = progress;
+      // 入室ボタンを有効化
+      btnJoinRoom.disabled = false;
+    });
+    preflightTest.on("failed", function (error) {
+      progress += `Test failed: ${error}`;
+      guide.value = progress;
+    });
+    preflightTest.on("progress", function (progressState) {
+      progress += `>> ${progressState} `;
+      guide.value = progress;
+    });
+  } else {
+    // 入室ボタンを有効化
+    btnJoinRoom.disabled = false;
+  }
+
+  // 入室ボタンが押されたときの処理
+  btnJoinRoom.onclick = async () => {
+    // アクセストークンとNTS接続リストを取得
+    const [token, iceServer] = await getToken();
+    console.log(`Token got. ${token}`); // 本番環境ではコメントアウトしましょう
+    console.log(`IceServer: `);
+    console.dir(iceServer);
+    connectRoom(token, iceServer); // ルームに接続
   };
 
   // 退出ボタンが押されたときの処理
@@ -57,7 +127,7 @@
   };
 
   // ルームに接続
-  const connectRoom = (token) => {
+  const connectRoom = (token, iceServer) => {
     // 部屋に入室
     const options = {
       name: ROOM_NAME,
@@ -81,6 +151,17 @@
         local: 2,
         remote: 2,
       };
+    }
+    if (tcpForced) {
+      options.iceServers = [
+        {
+          credential: iceServer.credential,
+          url: iceServer.url,
+          urls: iceServer.urls,
+          username: iceServer.username,
+        },
+      ];
+      options.iceTransportPolicy = "relay";
     }
     console.log(`🐞 options: `);
     console.dir(options);
@@ -119,15 +200,17 @@
       networkQualityStats
     ) => {
       // Print in console the networkQualityLevel using bars
-      console.log(
+      const qualityLevel =
         {
           1: "▃",
           2: "▃▄",
           3: "▃▄▅",
           4: "▃▄▅▆",
           5: "▃▄▅▆▇",
-        }[networkQualityLevel] || ""
-      );
+        }[networkQualityLevel] || "";
+      progress += `${participant.identity} ${qualityLevel}\n`;
+      guide.value = progress;
+      // console.log(`${participant.identity} ${qualityLevel}`);
 
       if (networkQualityStats) {
         // Print in console the networkQualityStats, which is non-null only if Network Quality
@@ -146,6 +229,7 @@
     participant.on("networkQualityLevelChanged", printNetworkQualityStats);
 
     // 参加者を表示する
+    const remote = document.getElementById("remote");
     const div = document.createElement("div");
     div.id = participant.sid;
 
@@ -174,7 +258,7 @@
     // 参加者の映像が切れたとき
     participant.on("trackUnsubscribed", trackUnsubscribed);
 
-    document.body.appendChild(div);
+    remote.appendChild(div);
   };
 
   // 他の参加者が退室したとき

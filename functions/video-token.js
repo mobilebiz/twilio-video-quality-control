@@ -1,5 +1,5 @@
 const uuid = require("uuid");
-exports.handler = function (context, event, callback) {
+exports.handler = async function (context, event, callback) {
   // ルーム名を取得
   const ROOM_NAME = event.roomName || "";
   if (ROOM_NAME === "") callback(new Error("roomName parameter was not set."));
@@ -23,7 +23,21 @@ exports.handler = function (context, event, callback) {
 
   accessToken.addGrant(videoGrant);
   accessToken.identity = IDENTITY;
+
+  // NTSの情報を取得する
+  const client = require("twilio")(context.API_KEY, context.API_SECRET, {
+    accountSid: context.ACCOUNT_SID,
+  });
+  const ntsInfos = await client.tokens.create();
+  let iceServer = {};
+  if ("iceServers" in ntsInfos) {
+    iceServer = ntsInfos.iceServers.filter(
+      (server) =>
+        server.urls === "turn:global.turn.twilio.com:443?transport=tcp"
+    )[0];
+  }
   callback(null, {
     token: accessToken.toJwt(),
+    iceServer: iceServer,
   });
 };
